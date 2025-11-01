@@ -1,0 +1,28 @@
+[package]
+name = "keyra"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
+[dependencies]
+capnp = "0.22.0"
+tokio = { version = "1", features = ["full"] }
+tonic = "0.14.2"
+prost = "0.14.1"
+tonic-prost = "0.14.2"
+prost-types = "0.14.1"
+capnp-rpc="0.22.0"
+tokio-util = { version = "0.7.4", features = ["compat"] }
+futures = "0.3.0"
+
+[build-dependencies]
+tonic-build = "0.14.2"
+tonic-prost-build = "0.14.2"
+capnpc = "0.22"
