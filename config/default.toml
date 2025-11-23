@@ -1,0 +1,11 @@
+[servers.capnp]
+enabled = false
+listener = ""
+
+[servers.grpc]
+enabled = true
+listener = "127.0.0.1:50051"
+
+[servers.http]
+enabled = true
+listener = "127.0.0.1:8081"

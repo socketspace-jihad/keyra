@@ -1,70 +1,12 @@
-use std::{cell::RefCell, collections::HashMap, future::Future, io::Error, rc::Rc, sync::{Arc, LazyLock, Mutex, RwLock}};
+use std::{collections::HashMap, sync::{Arc, LazyLock, RwLock}};
 
-use capnp::capability::{self, Promise};
-
-mod data_capnp {
-    include!(concat!(env!("OUT_DIR"),"/data_capnp.rs"));
-}
-
-use data_capnp::{data::{GetParams, GetResults, ListParams, ListResults, ReceiveParams, ReceiveResults, Server}, types::kind::{self, Reader}};
-
-
-static STORAGE: LazyLock<Arc<RwLock<HashMap<String,Types>>>> = LazyLock::new(||{
-    Arc::new(RwLock::new(HashMap::new()))
-});
+use dashmap::DashMap;
 
 pub trait FromTypes: Sized {
     fn from_types(T: &Types) -> Result<Self,String>;
 }
 
-pub struct Data;
-
-impl Server for Data {
-    fn receive(&self,params: ReceiveParams<>,res: ReceiveResults<>) ->  capnp::capability::Promise<(), capnp::Error> {
-        let key: capnp::text::Reader  = params.get().unwrap().get_key().unwrap();
-        println!("key {:?}",key.to_string());
-        
-        let value: Reader= params.get().unwrap().get_value().unwrap().get_kind();
-        match value.which().unwrap() {
-           kind::Which::StringVal(data)=>{
-               let v = Types::STRING(data.unwrap().to_string().unwrap());
-               (*STORAGE.write().unwrap()).insert(key.to_string().unwrap().clone(), v);
-           },
-           _ => println!("not implemented yet!"),
-        }
-        capnp::capability::Promise::ok(())
-
-    }
-
-    fn list(&self, _: ListParams<>, res: ListResults<>) -> Promise<(),capnp::Error> {
-        println!("list executed");
-        let storage = STORAGE.read().unwrap();
-        for (k,v) in storage.iter() {
-            println!("{k:?}: {v:?}");
-        };
-        capnp::capability::Promise::ok(())
-    }
-
-    fn get(&self,key: GetParams<>,mut res: GetResults<>) -> capnp::capability::Promise<(),capnp::Error> {
-        let k = key.get().unwrap().get_key().unwrap().to_string().unwrap();
-        let value = (*STORAGE.read().unwrap()).get(&k).cloned();
-        if let Some(val) = value {
-            match val {
-                Types::STRING(data)=>{
-                    res.get().init_value().init_kind().set_string_val(data);
-                },
-                _ => {
-                    println!("not implemented yet!");
-                }
-            }
-        }
-
-        capnp::capability::Promise::ok(())
-    }
-
-}
-
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,serde::Serialize,serde::Deserialize)]
 pub enum Types {
     STRING(String),
     I64(i64),
@@ -132,11 +74,18 @@ impl Types {
     }
 }
 
-pub async fn set(key: &String, val: &Types) -> Result<(),Error> {
-    (*STORAGE.write().unwrap()).insert(key.clone(), val.clone());
-    return Ok(());
+static STORAGE: LazyLock<DashMap<String, Arc<Types>>> = LazyLock::new(||{
+    DashMap::new()
+});
+
+pub fn get(key: &String)->Option<Arc<Types>>{
+    let value = STORAGE.get(key);
+    if let Some(data) = value {
+        return Some(data.value().clone());
+    }
+    return None;
 }
 
-pub async fn get(key: &String) -> Option<Types> {
-    (*STORAGE.read().unwrap()).get(key).cloned()
+pub fn set(key: String, value: Types){
+    STORAGE.insert(key, Arc::new(value));
 }
