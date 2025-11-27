@@ -1,7 +1,5 @@
 @0xaee05e117083091c;
 
-using Cxx = import "/capnp/c++.capnp";
-$Cxx.namespace("storage");
 
 struct Types {
 

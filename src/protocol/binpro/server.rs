@@ -1,40 +1,43 @@
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::io::{BufRead, BufReader, IoSliceMut, Read, Write};
+
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream, task};
 
 
-fn handle_client(mut stream: TcpStream) {
-    let mut reader = BufReader::new(stream);
+static MAX_KEY_LENGTH: usize = 1000;
+static MAX_VALUE_LENGTH: usize = 1000;
+
+pub async fn handle_read_vectored(mut stream: TcpStream){
+    let mut header = [0u8;1];
+
+    let mut key_length = [0u8;1];
+    let mut value_length = [0u8;2];
+
+    let mut payload = vec![0u8;MAX_KEY_LENGTH+MAX_VALUE_LENGTH];
+
     loop {
-        let mut buff = String::new();
-        match reader.read_line(&mut buff) {
-            Ok(data)=>{
-                println!("{:?}",buff);
+        let mut slice = [
+            IoSliceMut::new(&mut header),
+            IoSliceMut::new(&mut key_length),
+            IoSliceMut::new(&mut value_length),
+            IoSliceMut::new(&mut payload)
+        ];
+
+        match stream.try_read_vectored(&mut slice) {
+            Ok(size) if size > 0 =>{
+                let key_idx = u8::from_be_bytes(key_length) as usize;
+                let _ = str::from_utf8(&payload[0..key_idx]).unwrap();
+                tokio::spawn(async{
+                });
+            },
+            Ok(_) => {
+                stream.shutdown().await.unwrap();
+                break;
             },
             Err(_)=>{
+                stream.shutdown().await.unwrap();
                 break;
             }
         }
     }
-}
-
-pub fn run() -> std::io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:4000")?;
-
-    println!("Listening on 127.0.0.1:4000");
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                tokio::task::spawn(async move{
-                    handle_client(stream);
-                });
-            }
-            Err(e) => eprintln!("Connection failed: {}", e),
-        }
-    }
-
-    Ok(())
 }
 
