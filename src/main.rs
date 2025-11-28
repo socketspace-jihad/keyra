@@ -1,17 +1,24 @@
+use futures_lite::io::BufReader;
+use futures_lite::AsyncBufReadExt;
 use glommio::{net::TcpListener, LocalExecutorPoolBuilder, PoolPlacement};
 use futures_lite::{io::AsyncReadExt, io::AsyncWriteExt};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 const OP_SET: u8 = 1;
 const OP_GET: u8 = 2;
 
 async fn handle_client(
     mut stream: glommio::net::TcpStream,
-    store: Rc<RefCell<HashMap<Vec<u8>, Vec<u8>>>>
 ) {
+    let _ = stream.set_nodelay(true);
     let mut header = [0u8; 4];
+    let mut stream = BufReader::new(stream);
 
     loop {
         match stream.read_exact(&mut header).await {
@@ -31,20 +38,20 @@ async fn handle_client(
         match op {
             OP_SET => {
                 if stream.read_exact(&mut val).await.is_err() { break; }
-                
-                store.borrow_mut().insert(key, val);
-                
                 let _ = stream.write_all(b"OK").await;
             }
             OP_GET => {
-                let db = store.borrow();
-                if let Some(value) = db.get(&key) {
-                    let _ = stream.write_all(value).await;
-                } else {
-                    let _ = stream.write_all(b"NF").await; // Not Found
-                }
+                let _ = stream.write_all(b"NF").await; // Not Found
             }
             _ => break,
+        }
+        let buffer_is_empty = stream.fill_buf().await
+            .map(|b| b.is_empty())
+            .unwrap_or(true);
+
+        if buffer_is_empty {
+            if stream.flush().await.is_err() { break; }
+        } else {
         }
     }
 }
@@ -52,7 +59,6 @@ async fn handle_client(
 fn main() {
     LocalExecutorPoolBuilder::new(PoolPlacement::MaxSpread(num_cpus::get(), None))
         .on_all_shards(|| async move {
-            let local_store = Rc::new(RefCell::new(HashMap::new()));
             
             let listener = TcpListener::bind("0.0.0.0:4000").expect("Gagal bind");
             println!("Core aktif, listening on port 4000...");
@@ -66,9 +72,8 @@ fn main() {
                     }
                 };
 
-                let store_clone = local_store.clone();
                 glommio::spawn_local(async move {
-                    handle_client(stream, store_clone).await;
+                    handle_client(stream).await;
                 }).detach();
             }
         })
