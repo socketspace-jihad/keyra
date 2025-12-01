@@ -1,10 +1,6 @@
-use futures_lite::io::BufReader;
 use futures_lite::AsyncBufReadExt;
 use glommio::{net::TcpListener, LocalExecutorPoolBuilder, PoolPlacement};
 use futures_lite::{io::AsyncReadExt, io::AsyncWriteExt};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
 
 use mimalloc::MiMalloc;
 
@@ -18,7 +14,6 @@ async fn handle_client(
 ) {
     let _ = stream.set_nodelay(true);
     let mut header = [0u8; 4];
-    let mut stream = BufReader::new(stream);
 
     loop {
         match stream.read_exact(&mut header).await {
@@ -28,30 +23,22 @@ async fn handle_client(
 
         let op = header[0];
         let key_len = header[1] as usize;
-        let val_len = u16::from_be_bytes([header[2], header[3]]) as usize;
 
-        let mut key = vec![0u8; key_len];
-        let mut val = vec![0u8; val_len];
+        let mut key = [0u8;256];
+        let mut val = [0u8;1024];
 
-        if stream.read_exact(&mut key).await.is_err() { break; }
+        if stream.read_exact(&mut key[..key_len]).await.is_err() { break; }
         
         match op {
             OP_SET => {
-                if stream.read_exact(&mut val).await.is_err() { break; }
-                let _ = stream.write_all(b"OK").await;
+                let val_len = u16::from_be_bytes([header[2], header[3]]) as usize;
+                if stream.read_exact(&mut val[..val_len]).await.is_err() { break; }
+                let _ = stream.write(b"OK").await;
             }
             OP_GET => {
-                let _ = stream.write_all(b"NF").await; // Not Found
+                let _ = stream.write(b"NF").await; // Not Found
             }
             _ => break,
-        }
-        let buffer_is_empty = stream.fill_buf().await
-            .map(|b| b.is_empty())
-            .unwrap_or(true);
-
-        if buffer_is_empty {
-            if stream.flush().await.is_err() { break; }
-        } else {
         }
     }
 }
