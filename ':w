@@ -1,5 +1,5 @@
-use futures_lite::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
-use glommio::{net::TcpListener, LocalExecutorPoolBuilder, PoolPlacement};
+use futures_lite::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use glommio::{io::DmaStreamReader, net::TcpListener, LocalExecutorPoolBuilder, PoolPlacement};
 use loggix::{error, with_fields};
 use jemallocator::Jemalloc;
 
@@ -14,44 +14,39 @@ const MAX_PAYLOAD_BUFFER: usize = 1024;
 
 #[inline(always)]
 async fn handle_client(stream: glommio::net::TcpStream) {
-    let _ = stream.set_nodelay(true);
-
-    let (raw_reader, raw_writer) = futures_lite::io::split(stream);
-
-    let mut reader = BufReader::with_capacity(65536, raw_reader);
-    let mut writer = BufWriter::with_capacity(65536, raw_writer);
-
-    let mut buffer = [0u8; MAX_PAYLOAD_BUFFER];
-    let mut header = [0u8; 4];
     
-    let resp_ok = b"OK";
-    let resp_nf = b"NF";
+
+    let mut buffer = [0u8; MAX_PAYLOAD_BUFFER+4];
+    let resp_ok = b"OK"; 
 
     loop {
-        if reader.read_exact(&mut header).await.is_err() { break; }
+        // 1. Baca Header
+        if stream.read_exact(&mut buffer).await.is_err() { break; }
 
-        let op = header[0];
-        let key_len = header[1] as usize;
-        let val_len = u16::from_be_bytes([header[2], header[3]]) as usize;
-        let total_len = key_len + val_len;
+        let op = buffer[0];
+        let key_len = buffer[1] as usize;
+        let val_len = u16::from_be_bytes([buffer[2], buffer[3]]) as usize;
+        
+        if key_len + val_len > MAX_PAYLOAD_BUFFER { break; }
 
-        if total_len > MAX_PAYLOAD_BUFFER { break; }
-
-        if reader.read_exact(&mut buffer[..total_len]).await.is_err() {
+        // 2. Baca Key dan Value ke dalam buffer stack
+        let total_read_len = key_len + val_len;
+        if reader.read_exact(&mut buffer[..total_read_len]).await.is_err() { 
             break;
         }
+        
         match op {
             OP_SET => {
-                if writer.write_all(resp_ok).await.is_err() { break; }
+                if stream.write_all(resp_ok).await.is_err() { break; }
             }
             OP_GET => {
-                if writer.write_all(resp_nf).await.is_err() { break; }
+                if stream.write_all(b"NF").await.is_err() { break; }
             }
             _ => break,
         }
-
-        if reader.buffer().is_empty() {
-             if writer.flush().await.is_err() { break; }
+        
+        if let Err(_) = stream.flush().await { 
+             break;
         }
     }
 }
@@ -63,11 +58,7 @@ fn main() {
     LocalExecutorPoolBuilder::new(PoolPlacement::MaxSpread(num_cpus::get(), None))
         .on_all_shards(move || async move {
             let listener = TcpListener::bind(&addr).expect("Gagal bind");
-            let executor = glommio::executor();
 
-            let _ = with_fields!(
-                "id".to_string() => executor.id(),
-                ).info("core"); 
 
             loop {
                 let stream = match listener.accept().await {
