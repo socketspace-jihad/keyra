@@ -13,8 +13,8 @@ import (
 const (
 	TargetAddr   = "127.0.0.1:4000"
 	NumWorkers   = 64
-	BatchSize    = 2000
-	MsgPerWorker = 1000000
+	BatchSize    = 10000
+	MsgPerWorker = 10000000
 )
 
 const ResponseSize = 2
@@ -45,8 +45,8 @@ func connectWithRetry() *net.TCPConn {
 		tcpConn := conn.(*net.TCPConn)
 		tcpConn.SetNoDelay(true)
 		tcpConn.SetKeepAlive(true)
-		tcpConn.SetReadBuffer(1460) // 1460 for avoiding fragmentation ?
-		tcpConn.SetWriteBuffer(1460)
+		tcpConn.SetReadBuffer(1024 * 1024) // 1460 for avoiding fragmentation ?
+		tcpConn.SetWriteBuffer(1024 * 1024)
 
 		return tcpConn
 	}
