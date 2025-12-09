@@ -1,17 +1,16 @@
+use futures::channel::mpsc::Sender;
+use futures::SinkExt;
 use futures_lite::io::{AsyncReadExt,AsyncWriteExt,BufReader, BufWriter};
-use glommio::channels::shared_channel::{ConnectedReceiver, SharedReceiver, SharedSender};
 use crate::types::{SharedStore};
 use crate::sharding::get_shard_id;
 
 const OP_SET: u8 = 1;
 const OP_GET: u8 = 2;
-const OP_DEL: u8 = 3;
-const OP_SETX: u8 = 4;
 const MAX_PAYLOAD_BUFFER: usize = 1024;
 
 
 #[inline(always)]
-pub async fn handle_client(stream: glommio::net::TcpStream, storage: SharedStore, num_shards: usize) {
+pub async fn handle_client(stream: glommio::net::TcpStream, storage: SharedStore, num_shards: usize, mut senders: Vec<Sender<u8>>) {
     let core_id = glommio::executor().id();
     let _ = stream.set_nodelay(true);
     let (raw_reader, raw_writer) = futures_lite::io::split(stream);
@@ -35,6 +34,7 @@ pub async fn handle_client(stream: glommio::net::TcpStream, storage: SharedStore
         let key_buf = &buffer[..key_len];
         let shard_id = get_shard_id(key_buf, num_shards);
         if shard_id != core_id {
+            let _ = &senders[shard_id].send(125u8).await;
             if writer.write_all(resp_err_shard).await.is_err() {break;}
         } else {
             match op {
