@@ -1,6 +1,10 @@
+use std::rc::Rc;
+
 use futures::channel::mpsc::Sender;
 use futures::SinkExt;
 use futures_lite::io::{AsyncReadExt,AsyncWriteExt,BufReader, BufWriter};
+use glommio::channels::channel_mesh::Senders;
+use crate::storage;
 use crate::types::{SharedStore};
 use crate::sharding::get_shard_id;
 
@@ -10,8 +14,8 @@ const MAX_PAYLOAD_BUFFER: usize = 1024;
 
 
 #[inline(always)]
-pub async fn handle_client(stream: glommio::net::TcpStream, storage: SharedStore, num_shards: usize, mut senders: Vec<Sender<u8>>) {
-    let core_id = glommio::executor().id();
+pub async fn handle_client(stream: glommio::net::TcpStream, db: SharedStore, num_shards: &usize, sender: Rc<Senders<u8>>) {
+    let core_id = glommio::executor().id()-1;
     let _ = stream.set_nodelay(true);
     let (raw_reader, raw_writer) = futures_lite::io::split(stream);
     let mut reader = BufReader::with_capacity(65536, raw_reader);
@@ -32,29 +36,21 @@ pub async fn handle_client(stream: glommio::net::TcpStream, storage: SharedStore
             break;
         }
         let key_buf = &buffer[..key_len];
-        let shard_id = get_shard_id(key_buf, num_shards);
+        let shard_id = get_shard_id(key_buf, *num_shards);
         if shard_id != core_id {
-            let _ = &senders[shard_id].send(125u8).await;
+            match sender.send_to(shard_id, 125u8).await {
+                Ok(data) => {
+                    sto
+                },
+                Err(err) => {
+                }
+            }
             if writer.write_all(resp_err_shard).await.is_err() {break;}
         } else {
-            match op {
-                OP_SET => {
-                    let val_buf = &buffer[key_len..key_len+val_len];
-                    storage.borrow_mut().insert(key_buf.to_vec(), val_buf.to_vec());
-                    if writer.write_all(resp_ok).await.is_err() { break; }
-                }
-                OP_GET => {
-                    match storage.borrow().get(key_buf) {
-                        Some(data) => {
-                            if writer.write_all(&data).await.is_err() { break; }
-                        },
-                        None => {
-                            if writer.write_all(resp_nf).await.is_err() {break;}
-                        }
-                    }
-                }
-                _ => break,
-            }
+            storage::process(db, storage::Request{
+                op: op,
+                key: key_buf.to_vec()
+            });
         }
         if reader.buffer().is_empty() {
              if writer.flush().await.is_err() { break; }

@@ -13,7 +13,7 @@ import (
 const (
 	TargetAddr   = "127.0.0.1:4000"
 	NumWorkers   = 64
-	BatchSize    = 500
+	BatchSize    = 1000
 	MsgPerWorker = 100000
 )
 
